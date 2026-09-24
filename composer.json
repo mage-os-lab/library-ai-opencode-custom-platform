@@ -1,0 +1,45 @@
+{
+    "name": "mage-os/library-ai-opencode-custom-platform",
+    "description": "Symfony AI platform bridge for a self-hosted OpenCode server (opencode serve).",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "ai",
+        "bridge",
+        "opencode",
+        "platform",
+        "self-hosted"
+    ],
+    "authors": [
+        {
+            "name": "Mage-OS Community",
+            "homepage": "https://mage-os.org/"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/mage-os-lab/library-ai-opencode-custom-platform/issues",
+        "source": "https://github.com/mage-os-lab/library-ai-opencode-custom-platform"
+    },
+    "require": {
+        "php": "^8.2",
+        "symfony/ai-platform": "^0.13",
+        "symfony/http-client": "^7.3 || ^8.0"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^10.5 || ^11.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "MageOS\\AiOpenCodeCustomPlatform\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MageOS\\AiOpenCodeCustomPlatform\\Test\\": "Test/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
