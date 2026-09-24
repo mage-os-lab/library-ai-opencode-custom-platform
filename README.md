@@ -119,7 +119,7 @@ out of your answers, define a plain agent in the server's `opencode.json` and pa
 | Streaming | Answered in one chunk: the server replies only once the agent has finished |
 | Tool calling | **No**: refused before any request is made |
 | Images / files | **No**: refused rather than silently dropped |
-| `max_tokens`, `temperature`, `top_p`, `stop` | **No**: the server's message endpoint has no such fields |
+| `max_tokens`, `temperature`, `top_p`, `stop` | **No**: the server's message endpoint has no such fields. This bridge does not send them; `mage-os/module-ai-base` drops them before the call, so a caller's cap is not applied |
 
 The request can take minutes, because the server replies only once the agent has finished. The
 client waits up to `ModelClient::DEFAULT_TIMEOUT` (300 s).
