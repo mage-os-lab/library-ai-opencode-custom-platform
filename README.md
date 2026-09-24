@@ -117,12 +117,40 @@ out of your answers, define a plain agent in the server's `opencode.json` and pa
 | Token usage | Yes, from the server's own per-message count (`info.tokens`) |
 | Finish reason | Yes, when the server reports one |
 | Streaming | Answered in one chunk: the server replies only once the agent has finished |
-| Tool calling | **No**: refused before any request is made |
+| Tool calling | **Emulated** in the prompt, see below |
 | Images / files | **No**: refused rather than silently dropped |
 | `max_tokens`, `temperature`, `top_p`, `stop` | **No**: the server's message endpoint has no such fields. This bridge does not send them; `mage-os/module-ai-base` drops them before the call, so a caller's cap is not applied |
 
 The request can take minutes, because the server replies only once the agent has finished. The
 client waits up to `ModelClient::DEFAULT_TIMEOUT` (300 s).
+
+## Tool calling (emulated)
+
+The server's message endpoint has no parameter for *your* tools. Its own `tools` field is the
+opposite thing — the switch for tools the server's agent would run on its own host, which this
+bridge keeps off.
+
+So tools offered on a request are described in the system prompt, and the model is asked to answer
+with tagged blocks, which are parsed back into real `Symfony\AI\Platform\Result\ToolCall`
+objects:
+
+```
+<tool_call>{"name": "get_order_count", "arguments": {"period": "today"}}</tool_call>
+```
+
+Your tools run in your application, exactly as with a native provider. A turn containing calls
+reports finish reason `tool-call`; text alongside them comes back as a `MultiPartResult`. Replaying
+an assistant turn with `tool_calls` and a `tool` result message works: each call gets a fresh
+session, so both are rendered back into the prompt.
+
+Verified live against `anthropic/claude-haiku-4-5` on opencode 1.18.32: tool call emitted with valid
+arguments, tool result turned into a final answer, and a question needing no tool answered as plain
+text.
+
+**This is emulation, and reliability is the model's.** A model that ignores the format answers in
+prose, which comes back as text — your tool simply is not called. A block whose JSON does not parse,
+or that names a tool you did not offer, is left in the text rather than dropped, so you can see what
+the model tried. Strong instruction-following models handle this well; small local models may not.
 
 ## Errors
 

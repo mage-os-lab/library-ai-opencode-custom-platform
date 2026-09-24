@@ -13,11 +13,15 @@ use Symfony\AI\Platform\Exception\ServerException;
 use Symfony\AI\Platform\FinishReason\FinishReason;
 use Symfony\AI\Platform\FinishReason\FinishReasonCase;
 use Symfony\AI\Platform\Model;
+use Symfony\AI\Platform\Result\MultiPartResult;
 use Symfony\AI\Platform\Result\RawResultInterface;
 use Symfony\AI\Platform\Result\ResultInterface;
 use Symfony\AI\Platform\Result\Stream\Delta\TextDelta;
+use Symfony\AI\Platform\Result\Stream\Delta\ToolCallComplete;
 use Symfony\AI\Platform\Result\StreamResult;
 use Symfony\AI\Platform\Result\TextResult;
+use Symfony\AI\Platform\Result\ToolCall;
+use Symfony\AI\Platform\Result\ToolCallResult;
 use Symfony\AI\Platform\ResultConverterInterface;
 use Symfony\AI\Platform\TokenUsage\TokenUsageExtractorInterface;
 
@@ -53,22 +57,118 @@ class ResultConverter implements ResultConverterInterface
             throw $this->toException($info['error']);
         }
 
-        $text = $this->textOf(is_array($data['parts'] ?? null) ? $data['parts'] : []);
+        $answer = $this->textOf(is_array($data['parts'] ?? null) ? $data['parts'] : []);
+
+        // The server has no native tool calling for the caller's tools, so they were offered as a
+        // text contract and come back inside it; see ToolProtocol.
+        [$text, $toolCalls] = $this->extractToolCalls($answer, is_array($options['tools'] ?? null) ? $options['tools'] : []);
 
         $converted = ($options['stream'] ?? false)
-            ? new StreamResult((static function () use ($text): \Generator {
-                if ($text !== '') {
-                    yield new TextDelta($text);
-                }
-            })())
-            : new TextResult($text);
+            ? new StreamResult($this->toStream($text, $toolCalls))
+            : $this->toResult($text, $toolCalls);
 
         $finish = $info['finish'] ?? null;
-        if (is_string($finish) && $finish !== '') {
+        if ($toolCalls !== []) {
+            // What the turn actually is, whatever the server reported: the model stopped to wait
+            // for a tool result. A caller driving a tool loop branches on this.
+            $converted->getMetadata()->add(
+                'finish_reason',
+                new FinishReason(FinishReasonCase::TOOL_CALL, is_string($finish) && $finish !== '' ? $finish : 'tool-calls'),
+            );
+        } elseif (is_string($finish) && $finish !== '') {
             $converted->getMetadata()->add('finish_reason', new FinishReason($this->toFinishCase($finish), $finish));
         }
 
         return $converted;
+    }
+
+    /**
+     * Pull the tool call blocks out of the answer, leaving the prose that surrounded them.
+     *
+     * A block whose JSON does not parse, or that names a tool never offered, is deliberately left in
+     * the text. The alternative — dropping it, or failing the call — turns a model's formatting slip
+     * into either a silent no-op or a dead conversation, where leaving it in at least shows an
+     * administrator what the model tried to do.
+     *
+     * @param string $answer
+     * @param array<mixed> $tools The tools that were offered on this request
+     * @return array{0: string, 1: list<ToolCall>}
+     */
+    private function extractToolCalls(string $answer, array $tools): array
+    {
+        if (!str_contains($answer, ToolProtocol::TAG_OPEN)) {
+            return [$answer, []];
+        }
+
+        $offered = ToolProtocol::describe($tools);
+        $calls = [];
+        $text = (string) preg_replace_callback(
+            ToolProtocol::PATTERN,
+            static function (array $matches) use (&$calls, $offered): string {
+                $decoded = json_decode($matches[1], true);
+                $name = is_array($decoded) && is_string($decoded['name'] ?? null) ? $decoded['name'] : '';
+                if ($name === '' || ($offered !== [] && !isset($offered[$name]))) {
+                    return $matches[0];
+                }
+
+                $arguments = $decoded['arguments'] ?? [];
+                /** @var array<string,mixed> $arguments */
+                $arguments = is_array($arguments) ? $arguments : [];
+
+                $calls[] = new ToolCall(
+                    // The server never saw a tool call, so there is no provider id to carry through;
+                    // a caller pairing a result back to its call needs one all the same.
+                    'call_' . bin2hex(random_bytes(8)),
+                    $name,
+                    $arguments,
+                );
+
+                return '';
+            },
+            $answer,
+        );
+
+        return [trim($text), $calls];
+    }
+
+    /**
+     * The result shape matching what the turn contained.
+     *
+     * @param string $text
+     * @param list<ToolCall> $toolCalls
+     * @return ResultInterface
+     */
+    private function toResult(string $text, array $toolCalls): ResultInterface
+    {
+        if ($toolCalls === []) {
+            return new TextResult($text);
+        }
+
+        // Both, when the model explained itself and then called: a caller that only reads tool
+        // calls still gets them, and one that renders the text still has it.
+        return $text !== ''
+            ? new MultiPartResult([new TextResult($text), new ToolCallResult($toolCalls)])
+            : new ToolCallResult($toolCalls);
+    }
+
+    /**
+     * The same answer as a stream, for a caller that asked to stream.
+     *
+     * One chunk each, because the server answers only once the agent has finished: there is nothing
+     * partial left to emit by the time this runs.
+     *
+     * @param string $text
+     * @param list<ToolCall> $toolCalls
+     * @return \Generator
+     */
+    private function toStream(string $text, array $toolCalls): \Generator
+    {
+        if ($text !== '') {
+            yield new TextDelta($text);
+        }
+        if ($toolCalls !== []) {
+            yield new ToolCallComplete($toolCalls);
+        }
     }
 
     /**

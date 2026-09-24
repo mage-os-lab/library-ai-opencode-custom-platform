@@ -294,18 +294,6 @@ final class FactoryTest extends TestCase
         self::assertSame('Paris', $texts[0]->getText());
     }
 
-    public function test_it_refuses_tool_calling_before_contacting_the_server(): void
-    {
-        try {
-            $this->platform()->invoke('anthropic/claude-sonnet-4-6', self::ask('Hi'), ['tools' => [['name' => 'x']]]);
-            self::fail('Expected an exception');
-        } catch (InvalidArgumentException $e) {
-            self::assertStringContainsString('Tool calling', $e->getMessage());
-        }
-
-        self::assertSame([], $this->requests);
-    }
-
     public function test_an_unreachable_server_is_named_in_the_error(): void
     {
         $client = new MockHttpClient(static fn (): ResponseInterface => new MockResponse('', ['error' => 'Connection refused']));

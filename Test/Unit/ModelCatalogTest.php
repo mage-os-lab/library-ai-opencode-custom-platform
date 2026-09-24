@@ -62,11 +62,13 @@ final class ModelCatalogTest extends TestCase
     }
 
     /**
-     * Tool calling is switched off by this bridge, so the model must not claim it.
+     * Tool calling is emulated in the prompt rather than native, but a caller does get real tool
+     * calls back, so the capability is claimed. Without it, a caller that checks before offering
+     * tools would never offer any.
      */
-    public function test_it_does_not_claim_tool_calling(): void
+    public function test_it_claims_tool_calling(): void
     {
-        self::assertFalse((new ModelCatalog())->getModel('anthropic/claude-sonnet-4-6')->supports(Capability::TOOL_CALLING));
+        self::assertTrue((new ModelCatalog())->getModel('anthropic/claude-sonnet-4-6')->supports(Capability::TOOL_CALLING));
     }
 
     public function test_it_enumerates_nothing(): void

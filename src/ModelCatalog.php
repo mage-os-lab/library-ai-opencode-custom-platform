@@ -26,16 +26,21 @@ class ModelCatalog extends AbstractModelCatalog
     /**
      * What a model reached through the server can do, as far as this bridge can deliver it.
      *
-     * Deliberately narrower than what the upstream model supports: tool calls, structured output
-     * and attachments are all things the server's agent loop owns, and this bridge switches them
-     * off rather than surface them. Declaring them would let a caller ask for a feature that is
-     * then refused one layer down.
+     * Narrower than what the upstream model supports: structured output and attachments belong to
+     * the server's agent loop, and this bridge does not surface them, so declaring them would let a
+     * caller ask for something refused one layer down.
+     *
+     * Tool calling *is* declared, even though the server's message endpoint has no parameter for the
+     * caller's tools: {@see ToolProtocol} emulates it in the prompt and {@see ResultConverter} parses
+     * the calls back out. A caller therefore really does get tool calls, which is what the capability
+     * claims — how reliably is a property of the model, as it is on every provider.
      */
     private const CAPABILITIES = [
         Capability::INPUT_MESSAGES,
         Capability::INPUT_TEXT,
         Capability::OUTPUT_TEXT,
         Capability::OUTPUT_STREAMING,
+        Capability::TOOL_CALLING,
     ];
 
     /**

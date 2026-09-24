@@ -99,14 +99,8 @@ class ModelClient implements ModelClientInterface
         if (!$model instanceof OpenCodeServerModel) {
             throw new InvalidArgumentException(sprintf('"%s" only handles %s.', self::class, OpenCodeServerModel::class));
         }
-        if (!empty($options['tools'])) {
-            throw new InvalidArgumentException(
-                'Tool calling is not available through an opencode server: its agent runs tools on '
-                . 'the server itself, and this bridge switches them off.'
-            );
-        }
 
-        $body = $this->toPromptBody($model, $payload);
+        $body = $this->toPromptBody($model, $payload, $options);
 
         $sessionId = $this->createSession();
         try {
@@ -137,11 +131,16 @@ class ModelClient implements ModelClientInterface
      * single text part. A lone user message is sent as-is; a longer exchange is laid out as a
      * labelled transcript ending in the latest turn, which every chat model reads correctly.
      *
+     * Offered tools are appended to that system field as a contract the model answers in text; see
+     * {@see ToolProtocol}. They are the *caller's* tools, executed by the caller — nothing here
+     * enables the server's own, which stay off via `tools` and the session's permission ruleset.
+     *
      * @param OpenCodeServerModel $model
      * @param array<string,mixed>|string $payload
+     * @param array<string,mixed> $options
      * @return array<string,mixed>
      */
-    private function toPromptBody(OpenCodeServerModel $model, array|string $payload): array
+    private function toPromptBody(OpenCodeServerModel $model, array|string $payload, array $options): array
     {
         $messages = is_array($payload) ? ($payload['messages'] ?? null) : null;
         if (!is_array($messages) || $messages === []) {
@@ -159,22 +158,36 @@ class ModelClient implements ModelClientInterface
                 continue;
             }
             $role = is_string($message['role'] ?? null) ? $message['role'] : '';
-            if ($role === 'tool' || !empty($message['tool_calls'])) {
-                throw new InvalidArgumentException(
-                    'Tool call messages cannot be sent to an opencode server; this bridge offers no tools.'
-                );
+
+            if ($role === 'tool') {
+                $turns[] = ['role' => 'tool', 'text' => ToolProtocol::renderToolResult($message)];
+                continue;
             }
 
             $text = $this->textOf($message['content'] ?? '');
             if ($role === 'system') {
-                $system[] = $text;
+                if ($text !== '') {
+                    $system[] = $text;
+                }
                 continue;
             }
+
+            $calls = is_array($message['tool_calls'] ?? null) ? $message['tool_calls'] : [];
+            if ($role === 'assistant' && $calls !== []) {
+                $turns[] = ['role' => 'assistant', 'text' => ToolProtocol::renderToolCalls($text, $calls)];
+                continue;
+            }
+
             $turns[] = ['role' => $role, 'text' => $text];
         }
 
         if ($turns === []) {
             throw new InvalidArgumentException('An opencode server needs at least one user message to answer.');
+        }
+
+        $tools = is_array($options['tools'] ?? null) ? $options['tools'] : [];
+        if ($tools !== []) {
+            $system[] = ToolProtocol::instructions($tools);
         }
 
         $body = [
@@ -197,6 +210,8 @@ class ModelClient implements ModelClientInterface
      *
      * Images and documents are refused rather than dropped: a caller who attached one expects it to
      * be read, and silently answering without it would look like the model ignored it.
+     *
+     * A null content is an assistant turn that only asked for tools, which is normal, not empty.
      *
      * @param mixed $content
      * @return string
@@ -230,14 +245,19 @@ class ModelClient implements ModelClientInterface
      */
     private function flatten(array $turns): string
     {
-        if (count($turns) === 1) {
+        if (count($turns) === 1 && $turns[0]['role'] !== 'tool') {
             return $turns[0]['text'];
         }
 
         $lines = [];
         foreach ($turns as $turn) {
-            $label = $turn['role'] === 'assistant' ? 'Assistant' : 'User';
-            $lines[] = $label . ': ' . $turn['text'];
+            $lines[] = match ($turn['role']) {
+                'assistant' => 'Assistant: ' . $turn['text'],
+                // Already self-labelling, and labelling it "User" would credit the shop's data to
+                // whoever is chatting.
+                'tool' => $turn['text'],
+                default => 'User: ' . $turn['text'],
+            };
         }
 
         return implode("\n\n", $lines);
