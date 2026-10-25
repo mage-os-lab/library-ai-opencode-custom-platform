@@ -167,4 +167,4 @@ adds the model and provider to that message.
 
 The session API was verified against **opencode 1.18.32** via its OpenAPI spec (`GET /doc`).
 `symfony/ai-platform` is experimental and makes no backward-compatibility promise; this package is
-verified against **v0.13.0** and constrains itself to `^0.13`.
+verified against **v0.15.0** and constrains itself to `^0.15`.
